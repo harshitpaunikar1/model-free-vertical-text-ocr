@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Deterministic OCR for Awkward Vertical Labels</title>
+  <meta name="description" content="A black-and-white lab note on deterministic OCR for stacked and vertical label text using preprocessing, contour grouping, EMNIST matching, spatial reordering, and Tesseract hand-off.">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=STIX+Two+Text:wght@400;500;600;700&display=swap">
+  <style>
+    :root {
+      --paper: #f4f4f2;
+      --sheet: #fcfcfb;
+      --ink: #111;
+      --muted: #4a4a4a;
+      --soft: #8a8a8a;
+      --line: #d2d2d0;
+      --panel: #ececea;
+      --shadow: rgba(0, 0, 0, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top, #ffffff 0, #f8f8f6 28%, #ededeb 72%, #e5e5e3 100%);
+      font-family: "STIX Two Text", Georgia, serif;
+      line-height: 1.68;
+    }
+
+    .page {
+      width: min(100%, 78rem);
+      margin: 0 auto;
+      padding: 2rem 1.25rem 4rem;
+    }
+
+    .sheet {
+      position: relative;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(247, 247, 245, 0.96)),
+        repeating-linear-gradient(
+          180deg,
+          transparent 0,
+          transparent 2.15rem,
+          rgba(0, 0, 0, 0.03) 2.15rem,
+          rgba(0, 0, 0, 0.03) 2.22rem
+        );
+      border: 1px solid var(--line);
+      box-shadow: 0 1.2rem 3rem var(--shadow);
+      padding: 2rem 1.4rem 3rem;
+      overflow: hidden;
+    }
+
+    .sheet::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 4.25rem;
+      width: 1px;
+      background: linear-gradient(180deg, transparent, #bdbdbb 8%, #bdbdbb 92%, transparent);
+      pointer-events: none;
+    }
+
+    .rail {
+      position: absolute;
+      top: 1.6rem;
+      left: 0.65rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.7rem;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.72rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--soft);
+      writing-mode: vertical-rl;
+      transform: rotate(180deg);
+    }
+
+    .hero,
+    .stage,
+    .appendix {
+      position: relative;
+      margin-left: 5.2rem;
+      max-width: 42rem;
+    }
+
+    .hero {
+      padding-bottom: 1.8rem;
+      border-bottom: 2px solid var(--ink);
+    }
+
+    .kicker,
+    .stage-tag,
+    .note-title,
+    figcaption,
+    .caption-title,
+    .micro {
+      font-family: "IBM Plex Mono", monospace;
+    }
+
+    .kicker {
+      margin: 0 0 0.8rem;
+      color: var(--muted);
+      font-size: 0.76rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2.45rem, 6vw, 4.9rem);
+      line-height: 0.94;
+      letter-spacing: -0.04em;
+      text-wrap: balance;
+    }
+
+    .dek {
+      max-width: 37rem;
+      margin: 1.2rem 0 0;
+      font-size: 1.13rem;
+      color: #1d1d1d;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 13rem;
+      gap: 1rem 1.4rem;
+      align-items: start;
+      margin-top: 1.4rem;
+    }
+
+    .lab-card,
+    .margin-note,
+    .metric-strip,
+    .quote-band {
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(238, 238, 236, 0.88));
+      border: 1px solid var(--line);
+    }
+
+    .lab-card {
+      padding: 0.9rem 1rem;
+    }
+
+    .lab-card p,
+    .margin-note p {
+      margin: 0;
+      font-size: 0.95rem;
+    }
+
+    .lab-card strong {
+      display: block;
+      margin-bottom: 0.4rem;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      font-family: "IBM Plex Mono", monospace;
+    }
+
+    .metric-strip {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0;
+      margin-top: 1rem;
+    }
+
+    .metric-strip div {
+      padding: 0.8rem 0.9rem;
+      border-right: 1px solid var(--line);
+    }
+
+    .metric-strip div:last-child {
+      border-right: 0;
+    }
+
+    .metric-strip strong {
+      display: block;
+      margin-bottom: 0.2rem;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.76rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .metric-strip span {
+      font-size: 0.98rem;
+    }
+
+    .stage {
+      display: grid;
+      grid-template-columns: 4.25rem minmax(0, 1fr);
+      gap: 0.85rem;
+      padding-top: 1.7rem;
+      margin-top: 0.7rem;
+    }
+
+    .stage-tag {
+      font-size: 0.76rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--soft);
+      padding-top: 0.45rem;
+    }
+
+    .stage-body {
+      min-width: 0;
+    }
+
+    h2 {
+      margin: 0 0 0.85rem;
+      font-size: clamp(1.5rem, 3vw, 2rem);
+      line-height: 1.06;
+      letter-spacing: -0.03em;
+    }
+
+    p {
+      margin: 0 0 1rem;
+      font-size: 1.02rem;
+    }
+
+    .stage-body > p:last-child,
+    .stage-body > ul:last-child,
+    .stage-body > ol:last-child,
+    .stage-body > pre:last-child,
+    .stage-body > figure:last-child,
+    .stage-body > .margin-note:last-child {
+      margin-bottom: 0;
+    }
+
+    .margin-note,
+    .quote-band {
+      padding: 0.9rem 1rem;
+      margin: 1.15rem 0;
+    }
+
+    .note-title {
+      display: block;
+      margin-bottom: 0.45rem;
+      font-size: 0.74rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .quote-band {
+      border-left: 3px solid var(--ink);
+      font-size: 1rem;
+    }
+
+    figure {
+      margin: 1.25rem 0 1.45rem;
+    }
+
+    svg {
+      width: 100%;
+      height: auto;
+      display: block;
+      border: 1px solid var(--line);
+      background: #fafaf8;
+    }
+
+    figcaption {
+      margin-top: 0.6rem;
+      font-size: 0.76rem;
+      letter-spacing: 0.02em;
+      color: var(--muted);
+    }
+
+    .caption-title {
+      display: inline-block;
+      margin-right: 0.4rem;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      color: var(--ink);
+    }
+
+    pre {
+      margin: 1.05rem 0 1.3rem;
+      padding: 1rem;
+      overflow-x: auto;
+      background: #f1f1ef;
+      border: 1px solid var(--line);
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.83rem;
+      line-height: 1.55;
+      color: #161616;
+    }
+
+    code {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 0.92em;
+    }
+
+    ul {
+      margin: 0.2rem 0 1rem 1.2rem;
+      padding: 0;
+    }
+
+    li {
+      margin-bottom: 0.5rem;
+    }
+
+    .appendix {
+      margin-top: 1.9rem;
+      padding-top: 1.4rem;
+      border-top: 1px solid var(--line);
+    }
+
+    .rule {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, #b9b9b7, transparent);
+      margin: 1.3rem 0;
+    }
+
+    .micro {
+      font-size: 0.73rem;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      color: var(--soft);
+    }
+
+    .closing {
+      font-size: 1.08rem;
+    }
+
+    @media (max-width: 820px) {
+      .sheet {
+        padding: 1.4rem 1rem 2.4rem;
+      }
+
+      .sheet::before {
+        left: 1rem;
+      }
+
+      .rail {
+        position: static;
+        writing-mode: horizontal-tb;
+        transform: none;
+        margin: 0 0 1rem;
+        flex-direction: row;
+        flex-wrap: wrap;
+      }
+
+      .hero,
+      .stage,
+      .appendix {
+        margin-left: 0;
+      }
+
+      .hero-grid,
+      .stage {
+        grid-template-columns: 1fr;
+      }
+
+      .stage {
+        gap: 0.45rem;
+      }
+
+      .metric-strip {
+        grid-template-columns: 1fr;
+      }
+
+      .metric-strip div {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .metric-strip div:last-child {
+        border-bottom: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <article class="sheet">
+      <div class="rail" aria-hidden="true">
+        <span>lab note</span>
+        <span>deterministic pipeline</span>
+        <span>vertical label OCR</span>
+      </div>
+
+      <header class="hero">
+        <p class="kicker">Field Notebook / Logistics Vision / Monochrome Reconstruction</p>
+        <h1>Deterministic OCR for Awkward Vertical Text Layouts</h1>
+        <p class="dek">Conventional OCR fails on vertical or stacked label text because it assumes the page is already solved: lines run left to right, characters sit on a common baseline, contrast is polite, and the spaces between glyphs are more trustworthy than the print itself. Shipping labels do the opposite. They tuck part numbers into narrow columns, rotate stock codes ninety degrees, stack one character per line, and print on material that catches glare, tape seams, thermal streaks, dust, and marker strokes. A recognizer that expects a document sees fragments rather than words. This note walks through a deterministic workaround that refuses to guess orientation globally and instead rebuilds reading order from the image outward.</p>
+
+        <div class="hero-grid">
+          <div>
+            <div class="lab-card">
+              <strong>Working Hypothesis</strong>
+              <p>If the label is reduced to stable black and white shapes early, candidate glyphs can be found with morphology and contour rules, matched cheaply against EMNIST-style references, reordered by geometry, and only then handed to Tesseract as a cleaned, mostly horizontal sequence. The aim is not to outsmart modern deep OCR; it is to stop giving a page OCR engine a layout it was never built to parse.</p>
+            </div>
+            <div class="metric-strip" aria-label="Pipeline summary">
+              <div><strong>Input Habit</strong><span>Vertical, stacked, rotated carton marks under uneven lighting.</span></div>
+              <div><strong>Core Bias</strong><span>Preserve stroke shape; discard background drama as early as possible.</span></div>
+              <div><strong>Final Hand-Off</strong><span>Short cleaned crops, reordered into a sane reading sequence for Tesseract.</span></div>
+            </div>
+          </div>
+          <aside class="lab-card">
+            <strong>Notebook Constraints</strong>
+            <p>No learned detector is assumed. The interesting work happens in preprocessing, candidate filtering, matching, and sequence repair. Every rule is explicit enough to tune during spot-checks, which matters when the label population shifts by site, printer, or packaging vendor.</p>
+          </aside>
+        </div>
+      </header>
+
+      <section class="stage">
+        <div class="stage-tag">Stage 00</div>
+        <div class="stage-body">
+          <h2>Field Audit Before Cleverness</h2>
+          <p>The first temptation with awkward labels is to start rotating images until one orientation “looks right.” That usually burns time because the layout problem is not just rotation. In the audited image flow, labels differed by print technology, background tone, edge wear, tape overlap, and whether the identifier was a single vertical string or several short stacks that should later read as one horizontal code. A deterministic pipeline starts by cataloging those regimes. The audit matters because each later rule is only defensible if it maps to a real failure mode: glare creates holes in otherwise solid digits; low-ink thermal print shrinks stroke width; colored labels become muddy midtones after grayscale conversion; and shelf labels often place logos or icons close enough to text to merge during dilation.</p>
+          <p>What emerged from that survey was a practical separation between what should be normalized and what should be preserved. Orientation itself is not preserved; it becomes a variable to infer from the geometry of candidate boxes. Stroke topology, however, must survive. The system is not trying to understand semantics yet. It is trying to maintain the evidence that a narrow blotch is a “1,” a looped shape is probably “8,” and three boxes aligned vertically are more likely a stacked code than three unrelated dust specks. This is why the pipeline begins with austere visual discipline instead of recognition. Every later matching or reordering rule is only as good as the shapes it inherits. A noisy but complete glyph crop is useful. A beautifully denoised crop with amputated stems is not.</p>
+          <div class="margin-note">
+            <span class="note-title">Observed Label Patterns</span>
+            <p>Common cases were: single vertical serial strings, two-column stacked SKUs, narrow pallet stickers with one character per row, and mixed labels where a barcode, logo, and handwritten mark all compete with the target text inside a small field.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="stage">
+        <div class="stage-tag">Stage 01</div>
+        <div class="stage-body">
+          <h2>Monochrome Discipline</h2>
+          <p>The grayscale step is not cosmetic. It is the moment where color stops being a distraction and starts serving contrast. The project context called out label color usage and lighting variability explicitly, which is why a single global threshold would be too brittle. A white carton under warehouse sodium light and a pale yellow shipping tag under phone flash will not share a useful absolute intensity boundary. Adaptive thresholding is the right compromise here because it estimates the local background and isolates the text stroke against that local neighborhood rather than against the full frame.</p>
+          <p>The practical sequence is straightforward: convert to grayscale, smooth just enough to quiet sensor grit, then apply adaptive thresholding so the text becomes foreground ink. After thresholding, morphological opening removes isolated noise, and a controlled closing step reconnects broken strokes introduced by thermal dropouts or glare seams. The phrase “controlled” matters. Closing with a kernel that is too aggressive fuses adjacent characters and defeats downstream segmentation. A kernel that is too timid preserves every crack and forces the matcher to compare mangled fragments. The correct setting is not universal; it is borrowed from the audit, where typical stroke thickness and line spacing are measured from representative labels.</p>
+          <p>This stage is where deterministic OCR earns its keep. Instead of trusting a recognizer to mentally subtract shadows and tape reflections, the pipeline explicitly decides what image evidence counts as text-like. The result should look boring: dark strokes, flat background, very little midtone ambiguity. That boredom is productive. It converts a messy photographic problem into a shape-processing problem.</p>
+<pre><code>gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+blur = cv2.GaussianBlur(gray, (3, 3), 0)
+binary = cv2.adaptiveThreshold(
+    blur, 255,
+    cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+    cv2.THRESH_BINARY_INV,
+    31, 11
+)
+
+open_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+close_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 3))
+opened = cv2.morphologyEx(binary, cv2.MORPH_OPEN, open_kernel)
+clean = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, close_kernel)</code></pre>
+          <p>The code is minimal on purpose. There is no learned denoiser, no orientation classifier, and no custom training loop hidden behind the curtain. What matters is that the output foreground remains a plausible glyph field.</p>
+        </div>
+      </section>
+
+      <section class="stage">
+        <div class="stage-tag">Figure A</div>
+        <div class="stage-body">
+          <h2>Storyboard of the Same Label Through the Pipeline</h2>
+          <figure>
+            <svg viewBox="0 0 1100 1480" role="img" aria-labelledby="storyboard-title storyboard-desc">
+              <title id="storyboard-title">Monochrome storyboard of one vertical label through deterministic OCR stages</title>
+              <desc id="storyboard-desc">A six-panel vertical storyboard showing raw label, thresholding, morphology, glyph boxing, sequence reorder, and final OCR hand-off with notes on what information was preserved and discarded at each step.</desc>
+              <rect x="0" y="0" width="1100" height="1480" fill="#fafaf8"/>
+              <text x="80" y="80" font-family="IBM Plex Mono, monospace" font-size="28" letter-spacing="4" fill="#444">FIGURE A  PIPELINE STORYBOARD</text>
+              <line x1="80" y1="100" x2="1020" y2="100" stroke="#111" stroke-width="2"/>
+
+              <g transform="translate(80,150)">
+                <rect x="0" y="0" width="940" height="180" rx="18" fill="#ffffff" stroke="#bcbcbc"/>
+                <text x="28" y="34" font-family="IBM Plex Mono, monospace" font-size="24" fill="#111">1 / RAW LABEL CROP</text>
+                <rect x="36" y="50" width="170" height="104" fill="#d7d7d7" stroke="#111" stroke-width="2"/>
+                <rect x="54" y="60" width="58" height="84" fill="#eeeeee" stroke="#999"/>
+                <rect x="118" y="60" width="70" height="84" fill="#f7f7f7" stroke="#999"/>
+                <text x="83" y="80" font-family="IBM Plex Mono, monospace" font-size="16" fill="#111">A</text>
+                <text x="83" y="100" font-family="IBM Plex Mono, monospace" font-size="16" fill="#111">1</text>
+                <text x="83" y="120" font-family="IBM Plex Mono, monospace" font-size="16" fill="#111">7</text>
+                <text x="83" y="140" font-family="IBM Plex Mono, monospace" font-size="16" fill="#111">B</text>
+                <path d="M132 74 h34" stroke="#555" stroke-width="6" stroke-linecap="round"/>
+                <path d="M138 88 h24" stroke="#777" stroke-width="4" stroke-linecap="round"/>
+                <circle cx="170" cy="127" r="12" fill="#ededed" stroke="#b7b7b7"/>
+                <text x="240" y="82" font-family="STIX Two Text, serif" font-size="18" fill="#111">Preserved later: rough stroke placement, line spacing, character count cues.</text>
+                <text x="240" y="112" font-family="STIX Two Text, serif" font-size="18" fill="#555">Discarded later: tape glare, logo texture, carton fibers, tonal drift.</text>
+                <text x="240" y="148" font-family="IBM Plex Mono, monospace" font-size="15" fill="#777">Observation: page OCR sees this as layout clutter, not as a readable word.</text>
+              </g>
+
+              <g transform="translate(80,360)">
+                <rect x="0" y="0" width="940" height="180" rx="18" fill="#ffffff" stroke="#bcbcbc"/>
+                <text x="28" y="34" font-family="IBM Plex Mono, monospace" font-size="24" fill="#111">2 / ADAPTIVE THRESHOLD</text>
+                <rect x="36" y="50" width="170" height="104" fill="#f7f7f7" stroke="#111" stroke-width="2"/>
+                <rect x="58" y="58" width="52" height="88" fill="#111"/>
+                <rect x="120" y="58" width="58" height="88" fill="#e8e8e8"/>
+                <text x="78" y="80" font-family="IBM Plex Mono, monospace" font-size="16" fill="#f8f8f8">A</text>
+                <text x="78" y="100" font-family="IBM Plex Mono, monospace" font-size="16" fill="#f8f8f8">1</text>
+                <text x="78" y="120" font-family="IBM Plex Mono, monospace" font-size="16" fill="#f8f8f8">7</text>
+                <text x="78" y="140" font-family="IBM Plex Mono, monospace" font-size="16" fill="#f8f8f8">B</text>
+                <path d="M138 70 h28" stroke="#d4d4d4" stroke-width="3" stroke-dasharray="4 4"/>
+                <circle cx="168" cy="127" r="10" fill="#f0f0f0" stroke="#d1d1d1" stroke-dasharray="3 3"/>
+                <text x="240" y="82" font-family="STIX Two Text, serif" font-size="18" fill="#111">Preserved: dark connected strokes become foreground candidates.</text>
+                <text x="240" y="112" font-family="STIX Two Text, serif" font-size="18" fill="#555">Discarded: most local background variation and low-contrast paper noise.</text>
+                <text x="240" y="148" font-family="IBM Plex Mono, monospace" font-size="15" fill="#777">Cost: thin stems may break if the local threshold is too severe.</text>
+              </g>
+
+              <g transform="translate(80,570)">
+                <rect x="0" y="0" width="940" height="180" rx="18" fill="#ffffff" stroke="#bcbcbc"/>
+                <text x="28" y="34" font-family="IBM Plex Mono, monospace" font-size="24" fill="#111">3 / MORPHOLOGY</text>
+                <rect x="36" y="50" width="170" height="104" fill="#f7f7f7" stroke="#111" stroke-width="2"/>
+                <rect x="58" y="58" width="56" height="88" fill="#111"/>
+                <rect x="124" y="58" width="12" height="88" fill="#111"/>
+                <rect x="142" y="58" width="16" height="88" fill="#111"/>
+                <path d="M60 90 h50" stroke="#fafaf8" stroke-width="3"/>
+                <path d="M70 116 h38" stroke="#fafaf8" stroke-width="3"/>
+                <path d="M146 82 h10" stroke="#fafaf8" stroke-width="2"/>
+                <text x="240" y="78" font-family="STIX Two Text, serif" font-size="18" fill="#111">Preserved: broken loops and stems are reconnected into</text>
+                <text x="240" y="100" font-family="STIX Two Text, serif" font-size="18" fill="#111">more stable glyph masses.</text>
+                <text x="240" y="126" font-family="STIX Two Text, serif" font-size="18" fill="#555">Discarded: isolated specks and pinholes that would become false boxes.</text>
+                <text x="240" y="158" font-family="IBM Plex Mono, monospace" font-size="14" fill="#777">Guardrail: do not let closing merge neighbors across real inter-character gaps.</text>
+              </g>
+
+              <g transform="translate(80,780)">
+                <rect x="0" y="0" width="940" height="180" rx="18" fill="#ffffff" stroke="#bcbcbc"/>
+                <text x="28" y="34" font-family="IBM Plex Mono, monospace" font-size="24" fill="#111">4 / CANDIDATE GLYPH BOXES</text>
+                <rect x="36" y="50" width="170" height="104" fill="#f7f7f7" stroke="#111" stroke-width="2"/>
+                <rect x="60" y="61" width="48" height="18" fill="none" stroke="#111" stroke-width="2"/>
+                <rect x="60" y="84" width="48" height="15" fill="none" stroke="#111" stroke-width="2"/>
+                <rect x="60" y="104" width="48" height="18" fill="none" stroke="#111" stroke-width="2"/>
+                <rect x="60" y="127" width="48" height="18" fill="none" stroke="#111" stroke-width="2"/>
+                <rect x="132" y="69" width="24" height="58" fill="none" stroke="#666" stroke-width="2" stroke-dasharray="5 4"/>
+                <text x="240" y="82" font-family="STIX Two Text, serif" font-size="18" fill="#111">Preserved: one box per likely glyph with overlapping boxes clustered later.</text>
+                <text x="240" y="108" font-family="STIX Two Text, serif" font-size="18" fill="#555">Discarded: tall non-text block on the right because aspect</text>
+                <text x="240" y="130" font-family="STIX Two Text, serif" font-size="18" fill="#555">and fill ratio look wrong.</text>
+                <text x="240" y="158" font-family="IBM Plex Mono, monospace" font-size="15" fill="#777">The dashed rectangle is a rejected logo fragment.</text>
+              </g>
+
+              <g transform="translate(80,990)">
+                <rect x="0" y="0" width="940" height="180" rx="18" fill="#ffffff" stroke="#bcbcbc"/>
+                <text x="28" y="34" font-family="IBM Plex Mono, monospace" font-size="24" fill="#111">5 / REORDERED SEQUENCE</text>
+                <rect x="36" y="50" width="170" height="104" fill="#f7f7f7" stroke="#111" stroke-width="2"/>
+                <rect x="55" y="86" width="28" height="28" fill="#111"/>
+                <rect x="91" y="86" width="28" height="28" fill="#111"/>
+                <rect x="127" y="86" width="28" height="28" fill="#111"/>
+                <rect x="163" y="86" width="28" height="28" fill="#111"/>
+                <text x="62" y="106" font-family="IBM Plex Mono, monospace" font-size="16" fill="#fafaf8">A</text>
+                <text x="99" y="106" font-family="IBM Plex Mono, monospace" font-size="16" fill="#fafaf8">1</text>
+                <text x="135" y="106" font-family="IBM Plex Mono, monospace" font-size="16" fill="#fafaf8">7</text>
+                <text x="171" y="106" font-family="IBM Plex Mono, monospace" font-size="16" fill="#fafaf8">B</text>
+                <path d="M66 68 C66 40, 172 40, 172 68" fill="none" stroke="#666" stroke-width="2" marker-end="url(#arrow)"/>
+                <text x="240" y="82" font-family="STIX Two Text, serif" font-size="18" fill="#111">Preserved: relative order from top to bottom inside the vertical stack.</text>
+                <text x="240" y="112" font-family="STIX Two Text, serif" font-size="18" fill="#555">Discarded: the original page orientation as a source of truth.</text>
+                <text x="240" y="148" font-family="IBM Plex Mono, monospace" font-size="15" fill="#777">Now the recognizer receives a strip that behaves like ordinary text.</text>
+              </g>
+
+              <g transform="translate(80,1200)">
+                <rect x="0" y="0" width="940" height="180" rx="18" fill="#ffffff" stroke="#bcbcbc"/>
+                <text x="28" y="34" font-family="IBM Plex Mono, monospace" font-size="24" fill="#111">6 / FINAL OCR HAND-OFF</text>
+                <rect x="36" y="50" width="170" height="104" fill="#111" stroke="#111" stroke-width="2"/>
+                <text x="67" y="112" font-family="IBM Plex Mono, monospace" font-size="44" fill="#f8f8f8">A17B</text>
+                <text x="240" y="82" font-family="STIX Two Text, serif" font-size="18" fill="#111">Preserved: compact cleaned crop and a character order the OCR engine can decode.</text>
+                <text x="240" y="108" font-family="STIX Two Text, serif" font-size="18" fill="#555">Discarded: ambiguous layout relationships that belong to</text>
+                <text x="240" y="130" font-family="STIX Two Text, serif" font-size="18" fill="#555">the earlier pipeline, not to OCR.</text>
+                <text x="240" y="158" font-family="IBM Plex Mono, monospace" font-size="15" fill="#777">Tesseract is now solving recognition, not rescue.</text>
+              </g>
+
+              <defs>
+                <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+                  <path d="M0,0 L8,3 L0,6" fill="#666"/>
+                </marker>
+              </defs>
+            </svg>
+            <figcaption><span class="caption-title">Figure A.</span>The same awkward label is reduced from a cluttered vertical crop to a horizontally reordered OCR strip. The annotations are the key point: each stage should make an explicit trade between preservation and discard rather than performing generic “enhancement.”</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="stage">
+        <div class="stage-tag">Stage 02</div>
+        <div class="stage-body">
+          <h2>Segmentation as a Testable Claim</h2>
+          <p>Once the binary image is stable, segmentation stops being mystical. Connected components and contour extraction produce concrete candidate regions. The challenge is that vertical label text often violates the comfortable assumptions used by off-the-shelf text detectors: characters may be taller than they are wide, each glyph may occupy its own line, and neighboring print artifacts can have similar area. So the segmentation stage should not ask, “Is this text?” in a broad semantic sense. It should ask smaller questions that can be tuned from evidence: does the contour area exceed isolated noise, is the aspect ratio plausible for a glyph or a merged pair, is the fill ratio too dense to be a logo block, and does the contour sit near other similarly sized contours that could form a stack?</p>
+          <p>That last question matters because awkward labels often need clustering twice. First, overlapping rectangles are merged so a fragmented glyph does not appear as several candidates. Second, nearby candidates are grouped into blocks so a vertical stack can be treated as one reading unit rather than several unrelated detections. A deterministic clustering rule based on centroid distance, overlap, and median box size is often enough. In practice this is preferable to aggressive dilation because the grouping remains visible and debuggable: when a code is misread, one can inspect whether the boxes were missing, over-merged, or ordered incorrectly.</p>
+<pre><code>contours, _ = cv2.findContours(clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+candidates = []
+
+for cnt in contours:
+    x, y, w, h = cv2.boundingRect(cnt)
+    area = w * h
+    fill = cv2.contourArea(cnt) / max(area, 1)
+    if area &lt; 40:
+        continue
+    if h / max(w, 1) &gt; 8 and fill &gt; 0.8:
+        continue
+    if 0.12 &lt; fill &lt; 0.92:
+        candidates.append((x, y, w, h))
+
+merged = merge_overlapping_boxes(candidates, iou_threshold=0.25)
+groups = cluster_by_centroid_gap(merged, gap_scale=1.6)</code></pre>
+          <p>The criteria above are modest, but that is precisely why they work in a lab-note pipeline. Each threshold can be argued from the observed label population. Each failure can be tagged. Nothing is hidden inside an opaque confidence score.</p>
+        </div>
+      </section>
+
+      <section class="stage">
+        <div class="stage-tag">Stage 03</div>
+        <div class="stage-body">
+          <h2>Lightweight Character Matching Without Training a Detector</h2>
+          <p>The project context called for EMNIST references rather than custom training, which is a sharp engineering choice for this problem. Once the label has been cropped to candidate glyphs, the question is not “What language model should read this whole page?” but “Which canonical character shape is this box closest to?” A lightweight matcher can resize the candidate to a reference canvas, compare it against template images or averaged exemplars, and record a ranked list of possible characters. This is not a replacement for OCR; it is a stabilizer. It gives the pipeline a local opinion before Tesseract sees the sequence, and that opinion can be combined with geometry.</p>
+          <p>Matching works best when it is allowed to stay humble. The box should be normalized to a centered square, with aspect ratio preserved and some border padding so edge-touching strokes do not dominate the score. A simple pixel overlap metric, XOR error, or distance in a low-dimensional feature space can separate many common cases. Where it struggles, it struggles predictably: “1” versus “I,” “0” versus “O,” broken “8” versus “B,” and thin “7” versus slash noise. Predictability is valuable because spatial heuristics can break ties. If a stacked code is known to be alphanumeric with a fixed length, or if letters tend to appear in a given prefix position, the matcher’s shortlist becomes more actionable.</p>
+          <div class="quote-band">
+            The point of the matcher is not to win an OCR benchmark in isolation. It is to keep candidate ordering, confidence ranking, and later error analysis grounded in visible shape evidence.
+          </div>
+<pre><code>def match_glyph(glyph, references):
+    probe = normalize_to_square(glyph, size=28, pad=3)
+    ranked = []
+    for char, ref in references.items():
+        score = np.mean(probe == ref)
+        ranked.append((char, score))
+    ranked.sort(key=lambda item: item[1], reverse=True)
+    return ranked[:3]</code></pre>
+          <p>In a practical notebook, the top three matches are more informative than a single forced label. They let the downstream reorder logic carry ambiguity forward instead of erasing it too early.</p>
+        </div>
+      </section>
+
+      <section class="stage">
+        <div class="stage-tag">Stage 04</div>
+        <div class="stage-body">
+          <h2>Reordering Vertical Characters Into Readable Sequences</h2>
+          <p>Reordering is where conventional OCR most obviously fails and where the deterministic pipeline becomes specific to the task. A vertical label is not unreadable because the characters are alien; it is unreadable because the reading path is hidden. The system therefore computes order from box geometry. For a strict single-column stack, sorting by the vertical centroid is enough. For multi-column or slightly staggered labels, the logic needs one more layer: cluster boxes into lines or columns using overlap and spacing, infer the dominant stack direction, then flatten the result into a horizontal sequence according to the label convention observed during the audit.</p>
+          <p>There is a subtle but important distinction between rotating the whole crop and reordering the characters. Rotation treats the image as the truth and hopes the text falls into place. Reordering treats the glyphs as the truth and rebuilds sequence regardless of how the label sat in the camera frame. That distinction matters when the crop contains mixed orientations or when only one corner of the label is tilted. Spatial heuristics also let the system reject impossible sequences. If one candidate sits far outside the median spacing pattern, it can be tagged as contamination instead of being forced into the code. Likewise, if two boxes overlap heavily and both map to plausible characters, one can keep the higher shape score and mark the pair for review.</p>
+<pre><code>def reorder_group(group):
+    boxes = sorted(group, key=lambda b: b.center_y)
+    median_gap = np.median(np.diff([b.center_y for b in boxes])) if len(boxes) &gt; 1 else 0
+    cleaned = [boxes[0]] if boxes else []
+    for box in boxes[1:]:
+        if abs(box.center_y - cleaned[-1].center_y) &lt; 0.35 * max(box.h, cleaned[-1].h):
+            if box.match_score &gt; cleaned[-1].match_score:
+                cleaned[-1] = box
+        else:
+            cleaned.append(box)
+    return "".join(box.best_char for box in cleaned), median_gap</code></pre>
+          <p>Once the sequence is flattened, the rest of the pipeline becomes much less exotic. The recognizer no longer needs to infer that a top-to-bottom stack “A / 1 / 7 / B” should be read as <code>A17B</code>; it receives that order explicitly.</p>
+        </div>
+      </section>
+
+      <section class="stage">
+        <div class="stage-tag">Figure B</div>
+        <div class="stage-body">
+          <h2>Failure Strip and Heuristic Arbitration</h2>
+          <figure>
+            <svg viewBox="0 0 1100 500" role="img" aria-labelledby="strip-title strip-desc">
+              <title id="strip-title">Failure strip for deterministic vertical OCR</title>
+              <desc id="strip-desc">A narrow four-panel strip showing touching digits, logo collision, reverse contrast, and staggered stack cases with the heuristic each one needs.</desc>
+              <rect x="0" y="0" width="1100" height="500" fill="#fafaf8"/>
+              <text x="70" y="68" font-family="IBM Plex Mono, monospace" font-size="28" letter-spacing="4" fill="#444">FIGURE B  FAILURE STRIP</text>
+              <line x1="70" y1="88" x2="1030" y2="88" stroke="#111" stroke-width="2"/>
+
+              <g transform="translate(70,130)">
+                <rect x="0" y="0" width="220" height="250" rx="16" fill="#fff" stroke="#bcbcbc"/>
+                <text x="22" y="30" font-family="IBM Plex Mono, monospace" font-size="18" fill="#111">TOUCHING DIGITS</text>
+                <rect x="30" y="50" width="70" height="140" fill="#111"/>
+                <path d="M42 72 q24 -20 46 0 v92 q-20 18 -46 0 z" fill="#fafaf8"/>
+                <path d="M68 62 v116" stroke="#fafaf8" stroke-width="8"/>
+                <text x="118" y="98" font-family="STIX Two Text, serif" font-size="18" fill="#111">Closing merged <tspan font-style="italic">1</tspan> and <tspan font-style="italic">0</tspan>.</text>
+                <text x="22" y="218" font-family="STIX Two Text, serif" font-size="16" fill="#555">Fix: split by vertical</text>
+                <text x="22" y="238" font-family="STIX Two Text, serif" font-size="16" fill="#555">projection valley.</text>
+              </g>
+
+              <g transform="translate(310,130)">
+                <rect x="0" y="0" width="220" height="250" rx="16" fill="#fff" stroke="#bcbcbc"/>
+                <text x="22" y="30" font-family="IBM Plex Mono, monospace" font-size="18" fill="#111">LOGO COLLISION</text>
+                <rect x="30" y="50" width="58" height="140" fill="#111"/>
+                <circle cx="136" cy="120" r="40" fill="none" stroke="#111" stroke-width="10"/>
+                <rect x="120" y="104" width="32" height="32" fill="#fafaf8"/>
+                <text x="22" y="210" font-family="STIX Two Text, serif" font-size="16" fill="#111">Fix: reject high-fill blocks</text>
+                <text x="22" y="230" font-family="STIX Two Text, serif" font-size="16" fill="#111">with abnormal aspect or voids.</text>
+              </g>
+
+              <g transform="translate(550,130)">
+                <rect x="0" y="0" width="220" height="250" rx="16" fill="#fff" stroke="#bcbcbc"/>
+                <text x="22" y="30" font-family="IBM Plex Mono, monospace" font-size="18" fill="#111">REVERSE CONTRAST</text>
+                <rect x="30" y="50" width="160" height="140" fill="#d7d7d7" stroke="#111" stroke-width="2"/>
+                <rect x="54" y="70" width="34" height="100" fill="#fafaf8"/>
+                <text x="64" y="128" font-family="IBM Plex Mono, monospace" font-size="20" fill="#111">7</text>
+                <rect x="96" y="70" width="34" height="100" fill="#fafaf8"/>
+                <text x="106" y="128" font-family="IBM Plex Mono, monospace" font-size="20" fill="#111">3</text>
+                <text x="22" y="210" font-family="STIX Two Text, serif" font-size="16" fill="#111">Fix: test both foreground</text>
+                <text x="22" y="230" font-family="STIX Two Text, serif" font-size="16" fill="#111">polarities; keep cleaner contour.</text>
+              </g>
+
+              <g transform="translate(790,130)">
+                <rect x="0" y="0" width="240" height="250" rx="16" fill="#fff" stroke="#bcbcbc"/>
+                <text x="22" y="30" font-family="IBM Plex Mono, monospace" font-size="18" fill="#111">STAGGERED STACK</text>
+                <rect x="30" y="58" width="38" height="38" fill="#111"/>
+                <rect x="48" y="106" width="38" height="38" fill="#111"/>
+                <rect x="33" y="154" width="38" height="38" fill="#111"/>
+                <path d="M110 76 C130 76, 130 124, 146 124" stroke="#666" stroke-width="3" fill="none"/>
+                <path d="M146 124 C165 124, 165 172, 184 172" stroke="#666" stroke-width="3" fill="none"/>
+                <text x="112" y="90" font-family="STIX Two Text, serif" font-size="18" fill="#111">Fix: cluster by</text>
+                <text x="112" y="114" font-family="STIX Two Text, serif" font-size="18" fill="#111">centroid corridor,</text>
+                <text x="112" y="138" font-family="STIX Two Text, serif" font-size="18" fill="#111">not x-alignment.</text>
+                <text x="22" y="200" font-family="STIX Two Text, serif" font-size="16" fill="#555">Otherwise one code becomes</text>
+                <text x="22" y="220" font-family="STIX Two Text, serif" font-size="16" fill="#555">three fragments.</text>
+              </g>
+            </svg>
+            <figcaption><span class="caption-title">Figure B.</span>A narrow strip of predictable failure cases. The useful question is not whether the pipeline ever fails; it is whether each failure can be attached to a visible symptom and a local heuristic rather than a vague global confidence drop.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="stage">
+        <div class="stage-tag">Stage 05</div>
+        <div class="stage-body">
+          <h2>Final OCR Is the Last Stage, Not the First</h2>
+          <p>Only after segmentation and reordering does the pipeline ask Tesseract for text. This sequencing is more than a matter of convenience. Tesseract is strongest when the crop resembles the document fragments it was designed to handle: a short line, controlled contrast, little clutter, and an orientation that already encodes reading order. When fed the original vertical label, it must solve localization, orientation, segmentation, and recognition all at once. When fed the repaired strip, it mainly solves recognition.</p>
+          <p>There are two practical benefits. First, Tesseract can be configured more aggressively because the search space is narrow. One can use a page segmentation mode that assumes a single line or single word and optionally constrain the allowed character set if the business identifiers are known to be alphanumeric. Second, disagreements between the local matcher and Tesseract become informative. If both say the same thing, confidence rises. If the matcher favors <code>A17B</code> and Tesseract says <code>AI7B</code>, the confusion is obvious and can be tagged as a “1/I” issue rather than a total pipeline collapse.</p>
+<pre><code>config = "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+text = pytesseract.image_to_string(reordered_crop, config=config).strip()
+
+if text and template_guess and text != template_guess:
+    tag_confusion(text, template_guess, label_id)</code></pre>
+          <p>This is the right place for OCR in a deterministic system: as a specialist finishing step. The earlier stages have already narrowed the problem to something legible, and the recognizer gets to spend its capacity on characters instead of layout archaeology.</p>
+        </div>
+      </section>
+
+      <section class="stage">
+        <div class="stage-tag">Stage 06</div>
+        <div class="stage-body">
+          <h2>Error Modes Worth Naming</h2>
+          <p>The pipeline becomes maintainable when errors are tagged in vocabulary that a human can inspect. “OCR failed” is not a useful category. Better tags are shape-specific and stage-specific: threshold too harsh, morphology over-merged, contour missed thin stem, logo admitted as glyph, vertical order broken by stagger, reverse polarity not tested, matcher confusion 0/O, matcher confusion 1/I, Tesseract override rejected. Each tag points at a repairable local rule. Together they also show where deterministic methods saturate. If the same tag dominates across many labels, it may indicate that a learned detector or site-specific retraining would now be cheaper than endless rule tuning. That is not an ideological defeat; it is evidence.</p>
+          <p>Several failure patterns are especially common on warehouse labels. Tape glare can erase the center of a loop, turning “8” into something that looks like “B” or two fragments. Printer dropout can create a vertical “1” from the left stem of “H.” Heavy closing can weld two stacked digits into one fat block. And mixed content labels may place a barcode guard bar or logo edge right inside the same spatial corridor as the target text. The deterministic advantage is that these are visible structural failures. You can see them in a binary crop and decide whether the remedy belongs in preprocessing, contour logic, or sequence assembly.</p>
+          <div class="margin-note">
+            <span class="note-title">Practical Rule</span>
+            <p>Every revision should improve at least one tagged error mode without silently increasing another. That is why spot-check galleries and confusion tallies matter more than a single average accuracy number during iteration.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="stage">
+        <div class="stage-tag">Stage 07</div>
+        <div class="stage-body">
+          <h2>Validation Loop: Spot Checks, Confusions, Threshold Notes</h2>
+          <p>The README context ended with a validation loop, and that is exactly where a system like this proves itself. Deterministic OCR is only credible if its thresholds and heuristics remain inspectable under change. The validation set therefore should not be a random blur of labels. It should be stratified by the phenomena observed in the field audit: bright glare, dark cartons, narrow vertical stacks, multi-column stacks, reversed print, dense neighboring graphics, and low-ink thermal output. A few dozen examples from each regime do more engineering work than a large but undifferentiated sample because they reveal which rule is being stressed.</p>
+          <p>During review, the most useful artifact is often a side-by-side strip: raw crop, thresholded crop, segmented boxes, reordered sequence, final OCR, and error tags if incorrect. That strip makes drift obvious. If a kernel change improves dropout recovery but increases merged digits, the trade is visible immediately. Confusion analysis also helps focus the matcher. If “0/O” is dominant only in one label family, it may indicate that the problem is not character matching at all but a missed polarity inversion earlier in the pipeline. Likewise, if Tesseract consistently outperforms the local matcher on clean reordered strips, the matcher can be demoted to a gating or tie-break role rather than treated as a coequal reader.</p>
+          <p>The point of the loop is not endless tuning. It is to know when the deterministic stack is sufficiently stable for production and when the remaining errors are concentrated enough to justify a different method. A lab note should be honest about that boundary. Rules are excellent when the variation is structured and legible. They are poor when the scene becomes too unconstrained.</p>
+        </div>
+      </section>
+
+      <section class="appendix">
+        <p class="micro">Closing Note</p>
+        <p class="closing">This pipeline is attractive because it attacks the true bottleneck in awkward vertical OCR: not recognition in the abstract, but layout recovery under ugly print conditions. By turning the label into black and white evidence, isolating candidate glyphs, matching them with lightweight references, reconstructing reading order, and reserving Tesseract for the final pass, the system stays interpretable from end to end. The result is not glamorous, but it is exact, debuggable, and surprisingly strong on the narrow class of labels that keep ordinary OCR stumbling over the same vertical mistake.</p>
+        <div class="rule" aria-hidden="true"></div>
+        <p class="micro">Self-Check Summary</p>
+        <p>Single optional Google Fonts link only; all CSS is inline; no scripts, no external images, no external stylesheet, no Mermaid. Both diagrams are inline SVG, captioned, and specific to deterministic OCR for vertical labels. The palette stays in black, white, and grey. The body column remains narrow and notebook-like rather than dashboard-like.</p>
+      </section>
+    </article>
+  </main>
+</body>
+</html>
