@@ -64,3 +64,7 @@
 
 - Task summary: Late-night fix: pushed a config tweak after noticing the wrong default param was being used.
 - Deliverable: Wrapped it up properly this time.
+## 2025-04-22 - Day 10: Artifacts
+
+- Task summary: Came back after lunch and realized added one more evaluation metric that felt missing from the earlier comparison.
+- Deliverable: Wrapped it up properly this time.
