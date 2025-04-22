@@ -60,3 +60,7 @@
 
 - Task summary: Noticed something off from this morning — the test I wrote this morning had a hardcoded path, swapped it for a relative one.
 - Deliverable: Cleaner than this morning's version.
+## 2025-04-22 - Day 10: Artifacts
+
+- Task summary: Late-night fix: pushed a config tweak after noticing the wrong default param was being used.
+- Deliverable: Wrapped it up properly this time.
