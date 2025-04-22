@@ -56,3 +56,7 @@
 
 - Task summary: Ended up revisiting this in the evening — added a sanity check assertion that would catch obvious data shape issues early.
 - Deliverable: Small fix, clean result.
+## 2025-04-22 - Day 10: Artifacts
+
+- Task summary: Noticed something off from this morning — the test I wrote this morning had a hardcoded path, swapped it for a relative one.
+- Deliverable: Cleaner than this morning's version.
