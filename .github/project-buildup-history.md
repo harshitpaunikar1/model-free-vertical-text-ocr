@@ -26,7 +26,7 @@
 - Deliverable: I wrapped up the day with content outline mostly in place. It was not perfect, but it was good enough to keep the project moving. There were still a couple of loose parts, but nothing serious enough to block the next step.
 ## 2025-04-15 - Day 5: Content outline
 
-- Task summary: Noticed something off from this morning — resolved a merge conflict that came up when I switched branches to check something else.
+- Task summary: Noticed something off from this morning - resolved a merge conflict that came up when I switched branches to check something else.
 - Deliverable: Should've caught it earlier but better now than later.
 ## 2025-04-16 - Day 6: Architecture
 
@@ -54,11 +54,11 @@
 - Deliverable: Ended the day with support visuals in hand, plus a few side notes on what still needed fixing later. I also left myself a few rough reminders for the next day so I would not have to rediscover the same context again.
 ## 2025-04-22 - Day 10: Artifacts
 
-- Task summary: Ended up revisiting this in the evening — added a sanity check assertion that would catch obvious data shape issues early.
+- Task summary: Ended up revisiting this in the evening - added a sanity check assertion that would catch obvious data shape issues early.
 - Deliverable: Small fix, clean result.
 ## 2025-04-22 - Day 10: Artifacts
 
-- Task summary: Noticed something off from this morning — the test I wrote this morning had a hardcoded path, swapped it for a relative one.
+- Task summary: Noticed something off from this morning - the test I wrote this morning had a hardcoded path, swapped it for a relative one.
 - Deliverable: Cleaner than this morning's version.
 ## 2025-04-22 - Day 10: Artifacts
 
